@@ -1,9 +1,8 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>e</title>
+  <title>In-Page Web Proxy Viewer</title>
   <style>
     * { box-sizing: border-box; }
     html, body {
@@ -13,9 +12,37 @@
       display: flex;
       flex-direction: column;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      transition: background 0.2s;
+      background: #0f172a;
+      color: #e2e8f0;
     }
-    button:hover { background: #1d4ed8; }
+    #navbar {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.6rem 1rem;
+      background: #1e293b;
+      border-bottom: 1px solid #334155;
+    }
+    #urlInput {
+      flex: 1;
+      padding: 0.5rem 0.8rem;
+      font-size: 0.95rem;
+      background: #0f172a;
+      border: 1px solid #475569;
+      color: #f8fafc;
+      border-radius: 4px;
+      outline: none;
+    }
+    #urlInput:focus { border-color: #38bdf8; }
+    button {
+      padding: 0.5rem 1.2rem;
+      font-weight: 600;
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
     button:disabled { background: #64748b; cursor: not-allowed; }
     #status {
       font-size: 0.85rem;
@@ -34,7 +61,7 @@
 <body>
 
   <div id="navbar">
-    <input type="text" id="urlInput" placeholder="Enter URL (e.g. en.wikipedia.org or example.com)" />
+    <input type="text" id="urlInput" placeholder="https://example.com" />
     <button id="goBtn" onclick="loadProxy()">Go</button>
     <span id="status">Ready</span>
   </div>
@@ -42,43 +69,12 @@
   <iframe id="viewport" sandbox="allow-scripts allow-forms allow-same-origin allow-popups"></iframe>
 
   <script>
+    // PASTE YOUR WORKER URL HERE:
+    const PROXY_WORKER_URL = "https://plain-resonance-ee84.bwildetalk.workers.dev/";
+
     document.getElementById("urlInput").addEventListener("keydown", (e) => {
       if (e.key === "Enter") loadProxy();
     });
-
-    // List of public CORS proxies to try in order
-    const PROXIES = [
-      (url) => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
-      (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-      (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`
-    ];
-
-    async function fetchWithFallbacks(targetUrl, updateStatus) {
-      let lastError = null;
-
-      for (let i = 0; i < PROXIES.length; i++) {
-        const proxyUrl = PROXIES[i](targetUrl);
-        updateStatus(`Trying proxy ${i + 1}/${PROXIES.length}...`);
-
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 9000); // 9s timeout per proxy
-
-          const res = await fetch(proxyUrl, { signal: controller.signal });
-          clearTimeout(timeoutId);
-
-          if (res.ok) {
-            const text = await res.text();
-            if (text && text.trim().length > 0) return text;
-          }
-          lastError = new Error(`Proxy ${i + 1} responded with status ${res.status}`);
-        } catch (err) {
-          lastError = err;
-        }
-      }
-
-      throw lastError || new Error("All proxy attempts failed.");
-    }
 
     async function loadProxy() {
       let rawUrl = document.getElementById("urlInput").value.trim();
@@ -102,16 +98,20 @@
       }
 
       btn.disabled = true;
+      status.textContent = "Fetching...";
 
       try {
-        let html = await fetchWithFallbacks(target.href, (msg) => {
-          status.textContent = msg;
-        });
+        const fetchUrl = `${PROXY_WORKER_URL}?url=${encodeURIComponent(target.href)}`;
+        const res = await fetch(fetchUrl);
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        let html = await res.text();
 
         // 1. Strip meta CSP headers that block frames
         html = html.replace(/<meta[^>]*http-equiv=["']?Content-Security-Policy["']?[^>]*>/gi, "");
 
-        // 2. Inject <base> tag to point relative URLs back to the origin site
+        // 2. Inject <base> tag so relative paths resolve to the real host
         const baseHref = target.origin + target.pathname;
         const baseTag = `<base href="${baseHref}">`;
         if (/<head[^>]*>/i.test(html)) {
@@ -120,7 +120,7 @@
           html = `${baseTag}\n${html}`;
         }
 
-        // 3. Write directly to iframe document
+        // 3. Write into iframe
         const doc = iframe.contentWindow.document;
         doc.open();
         doc.write(html);
@@ -129,13 +129,7 @@
         status.textContent = "Loaded";
       } catch (err) {
         status.textContent = "Failed to load";
-        iframe.srcdoc = `
-          <div style="font-family:sans-serif; padding:2rem; color:#dc2626;">
-            <h3>Failed to load page</h3>
-            <p>${err.message}</p>
-            <p style="color:#64748b; font-size:0.9rem;">Sites with strict anti-bot protections (like Cloudflare Turnstile or CAPTCHAs) block shared public proxies.</p>
-          </div>
-        `;
+        iframe.srcdoc = `<p style="color:red; padding:1rem; font-family:sans-serif;">Error: ${err.message}</p>`;
       } finally {
         btn.disabled = false;
       }
