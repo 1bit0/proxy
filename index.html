@@ -43,7 +43,7 @@
       border-radius: 4px;
       cursor: pointer;
     }
-    button:disabled { background: #64748b; cursor: not-allowed; }
+    button:hover { background: #1d4ed8; }
     #status {
       font-size: 0.85rem;
       color: #94a3b8;
@@ -66,21 +66,21 @@
     <span id="status">Ready</span>
   </div>
 
-  <iframe id="viewport" sandbox="allow-scripts allow-forms allow-same-origin allow-popups"></iframe>
+  <!-- Note: When setting iframe src directly to worker, we remove restrictive sandbox flags that break scripts -->
+  <iframe id="viewport"></iframe>
 
   <script>
-    // PASTE YOUR WORKER URL HERE:
-    const PROXY_WORKER_URL = "https://plain-resonance-ee84.bwildetalk.workers.dev/";
+    // REPLACE THIS WITH YOUR CLOUDFLARE WORKER URL:
+    const PROXY_WORKER_URL = "https://my-cors-proxy.<your-subdomain>.workers.dev";
 
     document.getElementById("urlInput").addEventListener("keydown", (e) => {
       if (e.key === "Enter") loadProxy();
     });
 
-    async function loadProxy() {
+    function loadProxy() {
       let rawUrl = document.getElementById("urlInput").value.trim();
       const status = document.getElementById("status");
       const iframe = document.getElementById("viewport");
-      const btn = document.getElementById("goBtn");
 
       if (!rawUrl) return;
 
@@ -89,50 +89,19 @@
         document.getElementById("urlInput").value = rawUrl;
       }
 
-      let target;
       try {
-        target = new URL(rawUrl);
+        new URL(rawUrl);
       } catch (err) {
         status.textContent = "Invalid URL";
         return;
       }
 
-      btn.disabled = true;
-      status.textContent = "Fetching...";
+      status.textContent = "Loading...";
+      iframe.onload = () => { status.textContent = "Loaded"; };
+      iframe.onerror = () => { status.textContent = "Error loading"; };
 
-      try {
-        const fetchUrl = `${PROXY_WORKER_URL}?url=${encodeURIComponent(target.href)}`;
-        const res = await fetch(fetchUrl);
-
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-        let html = await res.text();
-
-        // 1. Strip meta CSP headers that block frames
-        html = html.replace(/<meta[^>]*http-equiv=["']?Content-Security-Policy["']?[^>]*>/gi, "");
-
-        // 2. Inject <base> tag so relative paths resolve to the real host
-        const baseHref = target.origin + target.pathname;
-        const baseTag = `<base href="${baseHref}">`;
-        if (/<head[^>]*>/i.test(html)) {
-          html = html.replace(/(<head[^>]*>)/i, `$1\n${baseTag}`);
-        } else {
-          html = `${baseTag}\n${html}`;
-        }
-
-        // 3. Write into iframe
-        const doc = iframe.contentWindow.document;
-        doc.open();
-        doc.write(html);
-        doc.close();
-
-        status.textContent = "Loaded";
-      } catch (err) {
-        status.textContent = "Failed to load";
-        iframe.srcdoc = `<p style="color:red; padding:1rem; font-family:sans-serif;">Error: ${err.message}</p>`;
-      } finally {
-        btn.disabled = false;
-      }
+      // Direct iframe navigation to the worker proxy
+      iframe.src = `${PROXY_WORKER_URL}/?url=${encodeURIComponent(rawUrl)}`;
     }
   </script>
 </body>
